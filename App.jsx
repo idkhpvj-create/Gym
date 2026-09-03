@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import { Plus, Trash2, X, Dumbbell, TrendingUp, Ruler, Camera, LayoutGrid, Loader2 } from "lucide-react";
+import { Plus, Trash2, X, Dumbbell, TrendingUp, Ruler, Camera, LayoutGrid, Loader2, ClipboardList, BookOpen, Award } from "lucide-react";
 
 const COMMON_LIFTS = [
   "Back Squat", "Bench Press", "Deadlift", "Overhead Press", "Barbell Row",
@@ -35,6 +35,33 @@ const fmtFriendlyDate = (d) => {
 };
 const epley1RM = (weight, reps) => (reps <= 1 ? weight : weight * (1 + reps / 30));
 const round1 = (n) => Math.round(n * 10) / 10;
+
+const LB_PER_KG = 2.2046226218;
+const lbToUnit = (lb, unit) => (unit === "kg" ? (parseFloat(lb) || 0) / LB_PER_KG : parseFloat(lb) || 0);
+const unitToLb = (val, unit) => (unit === "kg" ? (parseFloat(val) || 0) * LB_PER_KG : parseFloat(val) || 0);
+const displayWeight = (lb, unit) => {
+  const n = parseFloat(lb);
+  if (isNaN(n) || lb === "") return "";
+  return String(round1(lbToUnit(n, unit)));
+};
+const parseDisplayToLb = (val, unit) => {
+  if (val === "") return "";
+  return String(unitToLb(val, unit));
+};
+const fmtWeight = (lb, unit) => `${round1(lbToUnit(lb, unit))} ${unit}`;
+
+const LIFT_INFO = {
+  "Back Squat": "Quads, glutes, core",
+  "Bench Press": "Chest, triceps, shoulders",
+  "Deadlift": "Hamstrings, glutes, lower back",
+  "Overhead Press": "Shoulders, triceps",
+  "Barbell Row": "Back, biceps",
+  "Pull-up": "Lats, biceps",
+  "Front Squat": "Quads, core, upper back",
+  "Incline Bench Press": "Upper chest, shoulders",
+  "Romanian Deadlift": "Hamstrings, glutes",
+  "Hip Thrust": "Glutes, hamstrings",
+};
 
 async function loadKey(key, fallback) {
   try {
@@ -163,25 +190,89 @@ function NumberField({ label, value, onChange, placeholder, width = 84 }) {
   );
 }
 
+function Modal({ open, onClose, title, children }) {
+  if (!open) return null;
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(10,7,18,0.72)",
+        backdropFilter: "blur(4px)", WebkitBackdropFilter: "blur(4px)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        zIndex: 60, padding: 20,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: styles.card, color: styles.inkOnCard, borderRadius: 12,
+          maxWidth: 460, width: "100%", maxHeight: "85vh", overflowY: "auto",
+          padding: "1.4rem 1.5rem", boxShadow: "0 24px 60px rgba(0,0,0,0.5)",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12, gap: 10 }}>
+          <h3 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 17, fontWeight: 700, margin: 0 }}>{title}</h3>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: styles.steelLight, flexShrink: 0 }}>
+            <X size={18} />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function ImgCard({ seed, title, subtitle, onClick, imgHeight = 100 }) {
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        cursor: "pointer", borderRadius: 10, overflow: "hidden",
+        border: `1px solid ${styles.line}`, background: styles.headerPaper,
+      }}
+    >
+      <img
+        src={`https://picsum.photos/seed/${encodeURIComponent(seed)}/400/280`}
+        alt={title}
+        loading="lazy"
+        style={{ width: "100%", height: imgHeight, objectFit: "cover", display: "block" }}
+      />
+      <div style={{ padding: "9px 11px" }}>
+        <div style={{ fontSize: 12.5, fontWeight: 600 }}>{title}</div>
+        {subtitle && <div style={{ fontSize: 11, color: styles.steel, marginTop: 2 }}>{subtitle}</div>}
+      </div>
+    </div>
+  );
+}
+
 export default function GymTracker() {
   const [tab, setTab] = useState("dashboard");
   const [loading, setLoading] = useState(true);
   const [workouts, setWorkouts] = useState([]);
   const [measurements, setMeasurements] = useState([]);
   const [photos, setPhotos] = useState([]);
+  const [unit, setUnitState] = useState("lb");
+  const [pendingTemplate, setPendingTemplate] = useState(null);
 
   useEffect(() => {
     (async () => {
-      const [w, m, p] = await Promise.all([
+      const [w, m, p, u] = await Promise.all([
         loadKey("gym:workouts", []),
         loadKey("gym:measurements", []),
         loadKey("gym:photos", []),
+        loadKey("gym:unit", "lb"),
       ]);
       setWorkouts(w);
       setMeasurements(m);
       setPhotos(p);
+      setUnitState(u === "kg" ? "kg" : "lb");
       setLoading(false);
     })();
+  }, []);
+
+  const setUnit = useCallback((u) => {
+    setUnitState(u);
+    saveKey("gym:unit", u);
   }, []);
 
   const updateWorkouts = useCallback((next) => {
@@ -263,7 +354,10 @@ export default function GymTracker() {
   const tabs = [
     { id: "dashboard", label: "Overview", icon: LayoutGrid },
     { id: "workouts", label: "Workouts", icon: Dumbbell },
+    { id: "programs", label: "Programs", icon: ClipboardList },
+    { id: "library", label: "Library", icon: BookOpen },
     { id: "prs", label: "PRs", icon: TrendingUp },
+    { id: "achievements", label: "Achievements", icon: Award },
     { id: "measurements", label: "Body", icon: Ruler },
     { id: "photos", label: "Photos", icon: Camera },
   ];
@@ -310,22 +404,40 @@ export default function GymTracker() {
         }}
       >
         <div style={{ maxWidth: 760, margin: "0 auto", padding: "1.5rem 1.5rem 0" }}>
-          <h1
-            style={{
-              fontFamily: "'Space Grotesk', sans-serif",
-              fontSize: 22,
-              fontWeight: 700,
-              margin: 0,
-              letterSpacing: "-0.01em",
-              backgroundImage: styles.glow,
-              WebkitBackgroundClip: "text",
-              backgroundClip: "text",
-              color: "transparent",
-              display: "inline-block",
-            }}
-          >
-            Training log
-          </h1>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <h1
+              style={{
+                fontFamily: "'Space Grotesk', sans-serif",
+                fontSize: 22,
+                fontWeight: 700,
+                margin: 0,
+                letterSpacing: "-0.01em",
+                backgroundImage: styles.glow,
+                WebkitBackgroundClip: "text",
+                backgroundClip: "text",
+                color: "transparent",
+                display: "inline-block",
+              }}
+            >
+              Training log
+            </h1>
+            <div style={{ display: "flex", gap: 3, background: "rgba(255,255,255,0.07)", borderRadius: 20, padding: 3, flexShrink: 0 }}>
+              {["lb", "kg"].map((u) => (
+                <button
+                  key={u}
+                  onClick={() => setUnit(u)}
+                  style={{
+                    padding: "5px 12px", borderRadius: 16, border: "none", cursor: "pointer",
+                    fontSize: 11, fontWeight: 700, fontFamily: "'Space Grotesk', sans-serif",
+                    background: unit === u ? styles.accent : "transparent",
+                    color: unit === u ? "#fff" : styles.steelLight,
+                  }}
+                >
+                  {u}
+                </button>
+              ))}
+            </div>
+          </div>
           <div style={{ display: "flex", gap: "1.5rem", marginTop: "1rem", overflowX: "auto" }}>
             {tabs.map((t) => {
               const Icon = t.icon;
@@ -376,16 +488,37 @@ export default function GymTracker() {
                 workouts={workouts}
                 prList={prList}
                 onGo={scrollToSection}
+                unit={unit}
               />
             </div>
             <div ref={(el) => (sectionRefs.current.workouts = el)} data-section="workouts" style={{ paddingTop: "1rem", scrollMarginTop: 96 }}>
-              <Workouts workouts={workouts} setWorkouts={updateWorkouts} />
+              <Workouts
+                workouts={workouts}
+                setWorkouts={updateWorkouts}
+                unit={unit}
+                pendingTemplate={pendingTemplate}
+                onConsumeTemplate={() => setPendingTemplate(null)}
+              />
+            </div>
+            <div ref={(el) => (sectionRefs.current.programs = el)} data-section="programs" style={{ paddingTop: "1rem", scrollMarginTop: 96 }}>
+              <Programs
+                onUseTemplate={(name) => {
+                  setPendingTemplate(name);
+                  scrollToSection("workouts");
+                }}
+              />
+            </div>
+            <div ref={(el) => (sectionRefs.current.library = el)} data-section="library" style={{ paddingTop: "1rem", scrollMarginTop: 96 }}>
+              <Library prList={prList} unit={unit} />
             </div>
             <div ref={(el) => (sectionRefs.current.prs = el)} data-section="prs" style={{ paddingTop: "1rem", scrollMarginTop: 96 }}>
-              <PRs prList={prList} />
+              <PRs prList={prList} unit={unit} />
+            </div>
+            <div ref={(el) => (sectionRefs.current.achievements = el)} data-section="achievements" style={{ paddingTop: "1rem", scrollMarginTop: 96 }}>
+              <Achievements workouts={workouts} streak={streak} photos={photos} prList={prList} />
             </div>
             <div ref={(el) => (sectionRefs.current.measurements = el)} data-section="measurements" style={{ paddingTop: "1rem", scrollMarginTop: 96 }}>
-              <Measurements measurements={measurements} setMeasurements={updateMeasurements} />
+              <Measurements measurements={measurements} setMeasurements={updateMeasurements} unit={unit} />
             </div>
             <div ref={(el) => (sectionRefs.current.photos = el)} data-section="photos" style={{ paddingTop: "1rem", scrollMarginTop: 96 }}>
               <Photos photos={photos} setPhotos={updatePhotos} />
@@ -397,12 +530,31 @@ export default function GymTracker() {
   );
 }
 
-function Dashboard({ weekVolume, streak, workoutsThisWeek, workouts, prList, onGo }) {
+function Dashboard({ weekVolume, streak, workoutsThisWeek, workouts, prList, onGo, unit }) {
   const recent = [...workouts].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 4);
   const topPRs = prList.slice(0, 3);
+  const displayVolume = Math.round(lbToUnit(weekVolume, unit));
 
   return (
     <div>
+      <div
+        style={{
+          position: "relative", borderRadius: 14, overflow: "hidden",
+          marginBottom: "2rem", height: 180,
+        }}
+      >
+        <img
+          src="https://picsum.photos/seed/traininglog-hero/1200/500"
+          alt=""
+          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", filter: "saturate(0.9) brightness(0.55)" }}
+        />
+        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(18,12,29,0.05) 0%, rgba(18,12,29,0.92) 100%)" }} />
+        <div style={{ position: "absolute", left: 20, right: 20, bottom: 16 }}>
+          <div style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: styles.accentDeep, fontWeight: 700 }}>Welcome back</div>
+          <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 20, fontWeight: 700, color: styles.ink }}>Let's keep the streak going</div>
+        </div>
+      </div>
+
       <div style={{ marginBottom: "2.5rem" }}>
         <div
           style={{
@@ -417,8 +569,8 @@ function Dashboard({ weekVolume, streak, workoutsThisWeek, workouts, prList, onG
             display: "inline-block",
           }}
         >
-          {weekVolume.toLocaleString()}
-          <span style={{ fontSize: 16, fontWeight: 600, color: styles.steel, marginLeft: 8, WebkitTextFillColor: styles.steel }}>lb lifted this week</span>
+          {displayVolume.toLocaleString()}
+          <span style={{ fontSize: 16, fontWeight: 600, color: styles.steel, marginLeft: 8, WebkitTextFillColor: styles.steel }}>{unit} lifted this week</span>
         </div>
         <div style={{ display: "flex", gap: "2rem", marginTop: "1.1rem" }}>
           <div>
@@ -460,7 +612,7 @@ function Dashboard({ weekVolume, streak, workoutsThisWeek, workouts, prList, onG
             <div key={pr.name} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${styles.line}` }}>
               <span style={{ fontSize: 13, fontWeight: 500 }}>{pr.name}</span>
               <span style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 13, fontWeight: 600, color: styles.accentDeep }}>
-                {round1(pr.weight)} &times; {pr.reps}
+                {fmtWeight(pr.weight, unit)} &times; {pr.reps}
               </span>
             </div>
           ))
@@ -474,7 +626,7 @@ function EmptyRow({ text }) {
   return <div style={{ fontSize: 13, color: styles.steel, padding: "14px 0", borderBottom: `1px solid ${styles.line}` }}>{text}</div>;
 }
 
-function Workouts({ workouts, setWorkouts }) {
+function Workouts({ workouts, setWorkouts, unit, pendingTemplate, onConsumeTemplate }) {
   const [date, setDate] = useState(todayStr());
   const [name, setName] = useState("");
   const [exercises, setExercises] = useState([]);
@@ -490,6 +642,16 @@ function Workouts({ workouts, setWorkouts }) {
     addExerciseByName(exName);
     setExName("");
   };
+
+  useEffect(() => {
+    if (pendingTemplate && WORKOUT_SPLITS[pendingTemplate]) {
+      setSplitChoice(pendingTemplate);
+      setName((prev) => prev || pendingTemplate);
+      WORKOUT_SPLITS[pendingTemplate].forEach((ex) => addExerciseByName(ex));
+      onConsumeTemplate();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingTemplate]);
   const selectStyle = {
     padding: "8px 10px",
     border: `1px solid ${styles.cardLine}`,
@@ -592,7 +754,12 @@ function Workouts({ workouts, setWorkouts }) {
               <div key={i} style={{ display: "flex", alignItems: "flex-end", gap: 10, marginBottom: 8 }}>
                 <span style={{ fontSize: 12, color: styles.steel, width: 14, paddingBottom: 9 }}>{i + 1}</span>
                 <NumberField label="Reps" value={s.reps} onChange={(v) => updateSet(ex.id, i, "reps", v)} width={70} />
-                <NumberField label="Weight (lb)" value={s.weight} onChange={(v) => updateSet(ex.id, i, "weight", v)} width={90} />
+                <NumberField
+                  label={`Weight (${unit})`}
+                  value={displayWeight(s.weight, unit)}
+                  onChange={(v) => updateSet(ex.id, i, "weight", parseDisplayToLb(v, unit))}
+                  width={90}
+                />
                 <button onClick={() => removeSet(ex.id, i)} style={{ background: "none", border: "none", cursor: "pointer", color: styles.steelLight, paddingBottom: 9 }}>
                   <Trash2 size={14} />
                 </button>
@@ -647,7 +814,7 @@ function Workouts({ workouts, setWorkouts }) {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }} onClick={() => setExpanded(isOpen ? null : w.id)}>
                   <div>
                     <div style={{ fontSize: 13, fontWeight: 500 }}>{w.name || "Workout"}</div>
-                    <div style={{ fontSize: 12, color: styles.steel }}>{fmtDate(w.date)} &middot; {w.exercises.length} exercises &middot; {Math.round(volume).toLocaleString()} lb volume</div>
+                    <div style={{ fontSize: 12, color: styles.steel }}>{fmtDate(w.date)} &middot; {w.exercises.length} exercises &middot; {Math.round(lbToUnit(volume, unit)).toLocaleString()} {unit} volume</div>
                   </div>
                   <button onClick={(e) => { e.stopPropagation(); deleteWorkout(w.id); }} style={{ background: "none", border: "none", cursor: "pointer", color: styles.steelLight }}>
                     <Trash2 size={14} />
@@ -659,7 +826,7 @@ function Workouts({ workouts, setWorkouts }) {
                       <div key={ex.id} style={{ marginBottom: 8 }}>
                         <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>{ex.name}</div>
                         <div style={{ fontSize: 12, color: styles.steel }}>
-                          {ex.sets.map((s, i) => `${s.reps}\u00d7${round1(parseFloat(s.weight) || 0)}`).join("  \u00b7  ")}
+                          {ex.sets.map((s, i) => `${s.reps}\u00d7${round1(lbToUnit(s.weight, unit))}`).join("  \u00b7  ")}
                         </div>
                       </div>
                     ))}
@@ -674,7 +841,132 @@ function Workouts({ workouts, setWorkouts }) {
   );
 }
 
-function PRs({ prList }) {
+function Programs({ onUseTemplate }) {
+  const [active, setActive] = useState(null);
+
+  return (
+    <Section title="Programs">
+      <p style={{ fontSize: 12, color: styles.steel, marginTop: -6, marginBottom: 14 }}>
+        Browse common training splits and drop one straight into today's session.
+      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 14 }}>
+        {Object.keys(WORKOUT_SPLITS).map((name) => (
+          <ImgCard
+            key={name}
+            seed={name}
+            title={name}
+            subtitle={`${WORKOUT_SPLITS[name].length} exercises`}
+            onClick={() => setActive(name)}
+          />
+        ))}
+      </div>
+
+      <Modal open={!!active} onClose={() => setActive(null)} title={active || ""}>
+        {active && (
+          <div>
+            <ul style={{ margin: "0 0 16px", paddingLeft: 18, fontSize: 13, lineHeight: 1.8 }}>
+              {WORKOUT_SPLITS[active].map((ex) => (
+                <li key={ex}>{ex}</li>
+              ))}
+            </ul>
+            <button
+              onClick={() => { onUseTemplate(active); setActive(null); }}
+              style={{ padding: "10px 16px", border: "none", borderRadius: 6, background: styles.accent, color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+            >
+              Load into today's workout
+            </button>
+          </div>
+        )}
+      </Modal>
+    </Section>
+  );
+}
+
+function Library({ prList, unit }) {
+  const [active, setActive] = useState(null);
+  const pr = active ? prList.find((p) => p.name.trim().toLowerCase() === active.toLowerCase()) : null;
+
+  return (
+    <Section title="Exercise library">
+      <p style={{ fontSize: 12, color: styles.steel, marginTop: -6, marginBottom: 14 }}>
+        Tap a lift for what it targets and your current best.
+      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 12 }}>
+        {COMMON_LIFTS.map((lift) => (
+          <ImgCard key={lift} seed={lift} title={lift} onClick={() => setActive(lift)} imgHeight={84} />
+        ))}
+      </div>
+
+      <Modal open={!!active} onClose={() => setActive(null)} title={active || ""}>
+        {active && (
+          <div style={{ fontSize: 13, lineHeight: 1.7 }}>
+            <p style={{ margin: "0 0 10px", color: styles.steel }}>Targets: {LIFT_INFO[active] || "Compound lift"}</p>
+            {pr ? (
+              <p style={{ margin: 0 }}>
+                Your best: <strong>{fmtWeight(pr.weight, unit)} &times; {pr.reps}</strong>
+                <br />
+                Estimated 1RM: <strong>{fmtWeight(pr.est, unit)}</strong>
+              </p>
+            ) : (
+              <p style={{ margin: 0, color: styles.steelLight }}>No sets logged yet for this lift.</p>
+            )}
+          </div>
+        )}
+      </Modal>
+    </Section>
+  );
+}
+
+function Achievements({ workouts, streak, photos, prList }) {
+  const [active, setActive] = useState(null);
+
+  const badges = [
+    { id: "first", title: "First Session", emoji: "\ud83c\udfc1", desc: "Log your first workout.", earned: workouts.length >= 1 },
+    { id: "ten", title: "10 Sessions", emoji: "\ud83d\udcaa", desc: "Log 10 workouts in total.", earned: workouts.length >= 10 },
+    { id: "fifty", title: "50 Sessions", emoji: "\ud83d\udd25", desc: "Log 50 workouts in total.", earned: workouts.length >= 50 },
+    { id: "streak7", title: "7-Day Streak", emoji: "\u26a1", desc: "Train 7 days in a row.", earned: streak >= 7 },
+    { id: "streak30", title: "30-Day Streak", emoji: "\ud83c\udf1f", desc: "Train 30 days in a row.", earned: streak >= 30 },
+    { id: "firstpr", title: "First PR", emoji: "\ud83c\udfc6", desc: "Log your first personal record.", earned: prList.length >= 1 },
+    { id: "tenpr", title: "10 Lifts Tracked", emoji: "\ud83d\udcca", desc: "Have 10 different lifts on record.", earned: prList.length >= 10 },
+    { id: "photos", title: "Progress Tracker", emoji: "\ud83d\udcf8", desc: "Upload 5 progress photos.", earned: photos.length >= 5 },
+  ];
+  const activeBadge = badges.find((b) => b.id === active);
+
+  return (
+    <Section title="Achievements">
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 12 }}>
+        {badges.map((b) => (
+          <div
+            key={b.id}
+            onClick={() => setActive(b.id)}
+            style={{
+              cursor: "pointer", textAlign: "center", padding: "16px 10px", borderRadius: 10,
+              border: `1px solid ${styles.line}`,
+              background: b.earned ? styles.glow : "transparent",
+              opacity: b.earned ? 1 : 0.5,
+            }}
+          >
+            <div style={{ fontSize: 22, marginBottom: 6 }}>{b.earned ? b.emoji : "\ud83d\udd12"}</div>
+            <div style={{ fontSize: 11, fontWeight: 600 }}>{b.title}</div>
+          </div>
+        ))}
+      </div>
+
+      <Modal open={!!active} onClose={() => setActive(null)} title={activeBadge?.title || ""}>
+        {activeBadge && (
+          <div style={{ fontSize: 13, lineHeight: 1.7 }}>
+            <p style={{ margin: "0 0 8px" }}>{activeBadge.desc}</p>
+            <p style={{ margin: 0, fontWeight: 700, color: activeBadge.earned ? styles.accent : styles.steelLight }}>
+              {activeBadge.earned ? "Earned" : "Not yet earned"}
+            </p>
+          </div>
+        )}
+      </Modal>
+    </Section>
+  );
+}
+
+function PRs({ prList, unit }) {
   return (
     <Section title="Personal records">
       <p style={{ fontSize: 12, color: styles.steel, marginTop: -6, marginBottom: 14 }}>
@@ -686,18 +978,18 @@ function PRs({ prList }) {
         <div>
           <div style={{ display: "flex", fontSize: 11, color: styles.steel, padding: "0 0 8px", borderBottom: `1px solid ${styles.line}` }}>
             <span style={{ flex: 1 }}>Exercise</span>
-            <span style={{ width: 90, textAlign: "right" }}>Best set</span>
-            <span style={{ width: 90, textAlign: "right" }}>Est. 1RM</span>
+            <span style={{ width: 90, textAlign: "right" }}>Best set ({unit})</span>
+            <span style={{ width: 90, textAlign: "right" }}>Est. 1RM ({unit})</span>
             <span style={{ width: 90, textAlign: "right" }}>Date</span>
           </div>
           {prList.map((pr) => (
             <div key={pr.name} style={{ display: "flex", alignItems: "center", padding: "12px 0", borderBottom: `1px solid ${styles.line}` }}>
               <span style={{ flex: 1, fontSize: 13, fontWeight: 500 }}>{pr.name}</span>
               <span style={{ width: 90, textAlign: "right", fontFamily: "'Space Grotesk', sans-serif", fontSize: 13, fontWeight: 600 }}>
-                {round1(pr.weight)}&times;{pr.reps}
+                {round1(lbToUnit(pr.weight, unit))}&times;{pr.reps}
               </span>
               <span style={{ width: 90, textAlign: "right", fontFamily: "'Space Grotesk', sans-serif", fontSize: 13, fontWeight: 600, color: styles.accentDeep }}>
-                {round1(pr.est)}
+                {round1(lbToUnit(pr.est, unit))}
               </span>
               <span style={{ width: 90, textAlign: "right", fontSize: 12, color: styles.steel }}>{fmtDateShort(pr.date)}</span>
             </div>
@@ -708,7 +1000,7 @@ function PRs({ prList }) {
   );
 }
 
-function Measurements({ measurements, setMeasurements }) {
+function Measurements({ measurements, setMeasurements, unit }) {
   const [date, setDate] = useState(todayStr());
   const [weight, setWeight] = useState("");
   const [chest, setChest] = useState("");
@@ -718,14 +1010,14 @@ function Measurements({ measurements, setMeasurements }) {
 
   const save = () => {
     if (!weight) return;
-    const entry = { id: uid(), date, weight: parseFloat(weight), chest: chest || null, waist: waist || null, arms: arms || null, thighs: thighs || null };
+    const entry = { id: uid(), date, weight: unitToLb(weight, unit), chest: chest || null, waist: waist || null, arms: arms || null, thighs: thighs || null };
     setMeasurements([entry, ...measurements]);
     setWeight(""); setChest(""); setWaist(""); setArms(""); setThighs("");
   };
   const remove = (id) => setMeasurements(measurements.filter((m) => m.id !== id));
 
   const sorted = [...measurements].sort((a, b) => (a.date < b.date ? -1 : 1));
-  const chartData = sorted.map((m) => ({ date: fmtDateShort(m.date), weight: m.weight }));
+  const chartData = sorted.map((m) => ({ date: fmtDateShort(m.date), weight: round1(lbToUnit(m.weight, unit)) }));
 
   return (
     <div>
@@ -736,7 +1028,7 @@ function Measurements({ measurements, setMeasurements }) {
             <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
               style={{ padding: "7px 8px", border: `1px solid ${styles.cardLine}`, borderRadius: 4, fontSize: 13, background: styles.card, color: styles.inkOnCard }} />
           </label>
-          <NumberField label="Weight (lb)" value={weight} onChange={setWeight} width={90} />
+          <NumberField label={`Weight (${unit})`} value={weight} onChange={setWeight} width={90} />
           <NumberField label="Chest (in)" value={chest} onChange={setChest} width={90} />
           <NumberField label="Waist (in)" value={waist} onChange={setWaist} width={90} />
           <NumberField label="Arms (in)" value={arms} onChange={setArms} width={90} />
@@ -780,7 +1072,7 @@ function Measurements({ measurements, setMeasurements }) {
               <div>
                 <div style={{ fontSize: 13, fontWeight: 500 }}>{fmtDate(m.date)}</div>
                 <div style={{ fontSize: 12, color: styles.steel }}>
-                  {m.weight} lb
+                  {round1(lbToUnit(m.weight, unit))} {unit}
                   {m.chest && ` \u00b7 chest ${m.chest}"`}
                   {m.waist && ` \u00b7 waist ${m.waist}"`}
                   {m.arms && ` \u00b7 arms ${m.arms}"`}
